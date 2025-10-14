@@ -100,9 +100,9 @@ export default function GamePage() {
   useSocketEvent(socket, 'game:error', (error: string) => {
     console.error('Game error:', error);
     // Only show alert for critical errors, not connection issues
-    if (error !== 'Room not found' || gameSession) {
+    if (error !== 'Room not found' && gameSession) {
       alert(error);
-    } else {
+    } else if (error === 'Room not found') {
       // For room not found, redirect back to home
       router.push('/');
     }
