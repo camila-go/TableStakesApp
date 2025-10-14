@@ -1,6 +1,6 @@
 import { Server as SocketIOServer } from 'socket.io';
 import { Server as HTTPServer } from 'http';
-import { GameSession, GameState, Player, Team, Question, Answer, GameSettings, GameResult } from '@/types/game';
+import { GameSession, GameState, Player, Team, Question, Answer, GameSettings, GameResult, CustomQuestion } from '@/types/game';
 import { v4 as uuidv4 } from 'uuid';
 
 class GameManager {
@@ -19,12 +19,18 @@ class GameManager {
       // Host creates a new game
       socket.on('host:create-game', (settings: GameSettings) => {
         const roomCode = this.generateRoomCode();
+        
+        // Use custom questions if available, otherwise use default questions
+        const questions = settings.customQuestions && settings.customQuestions.length > 0 
+          ? this.convertCustomQuestionsToQuestions(settings.customQuestions)
+          : this.getDefaultQuestions();
+        
         const gameSession: GameSession = {
           id: uuidv4(),
           roomCode,
           hostId: socket.id,
           teams: this.createDefaultTeams(),
-          questions: this.getDefaultQuestions(),
+          questions,
           currentQuestionIndex: 0,
           gameState: GameState.WAITING,
           settings,
@@ -203,6 +209,18 @@ class GameManager {
         category: 'Communication'
       }
     ];
+  }
+
+  private convertCustomQuestionsToQuestions(customQuestions: CustomQuestion[]): Question[] {
+    return customQuestions.map((customQ, index) => ({
+      id: customQ.id,
+      text: customQ.text,
+      options: customQ.options,
+      correctAnswer: customQ.correctAnswer,
+      points: 10, // Base points for custom questions
+      timeLimit: customQ.timeLimit,
+      category: 'Custom'
+    }));
   }
 
   private calculatePoints(isCorrect: boolean, timeToAnswer: number, basePoints: number): number {

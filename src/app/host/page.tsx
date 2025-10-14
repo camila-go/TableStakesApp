@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useSocket, useSocketEvent } from '@/hooks/useSocket';
-import { GameSession, GameSettings, GameState, Team } from '@/types/game';
-import { Trophy, Users, Play, Settings, Copy, Check } from 'lucide-react';
+import { GameSession, GameSettings, GameState, Team, CustomQuestion } from '@/types/game';
+import { Trophy, Users, Play, Settings, Copy, Check, Plus, Edit3, Trash2, Save, X } from 'lucide-react';
 
 export default function HostDashboard() {
   const { socket, isConnected } = useSocket();
@@ -14,10 +14,21 @@ export default function HostDashboard() {
     timePerQuestion: 30,
     allowTeamVoting: true,
     enableSpeedBonus: true,
-    enableStreakBonus: true
+    enableStreakBonus: true,
+    customQuestions: []
   });
   const [isCreating, setIsCreating] = useState(false);
   const [roomCodeCopied, setRoomCodeCopied] = useState(false);
+  
+  // Custom question management
+  const [isAddingQuestion, setIsAddingQuestion] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<string | null>(null);
+  const [newQuestion, setNewQuestion] = useState<Partial<CustomQuestion>>({
+    text: '',
+    options: ['', '', '', ''],
+    correctAnswer: 0,
+    timeLimit: 30
+  });
 
   // Socket event handlers
   useSocketEvent(socket, 'game:created', (session: GameSession) => {
@@ -68,6 +79,87 @@ export default function HostDashboard() {
   const handleEndGame = () => {
     if (!socket || !gameSession) return;
     socket.emit('host:end-game');
+  };
+
+  // Custom question handlers
+  const handleAddQuestion = () => {
+    if (!newQuestion.text || newQuestion.options?.some(opt => !opt.trim())) return;
+    
+    const question: CustomQuestion = {
+      id: Date.now().toString(),
+      text: newQuestion.text!,
+      options: newQuestion.options!,
+      correctAnswer: newQuestion.correctAnswer!,
+      timeLimit: newQuestion.timeLimit!
+    };
+    
+    setSettings(prev => ({
+      ...prev,
+      customQuestions: [...prev.customQuestions, question]
+    }));
+    
+    setNewQuestion({
+      text: '',
+      options: ['', '', '', ''],
+      correctAnswer: 0,
+      timeLimit: 30
+    });
+    setIsAddingQuestion(false);
+  };
+
+  const handleEditQuestion = (questionId: string) => {
+    const question = settings.customQuestions.find(q => q.id === questionId);
+    if (question) {
+      setNewQuestion(question);
+      setEditingQuestion(questionId);
+      setIsAddingQuestion(true);
+    }
+  };
+
+  const handleUpdateQuestion = () => {
+    if (!editingQuestion || !newQuestion.text || newQuestion.options?.some(opt => !opt.trim())) return;
+    
+    const updatedQuestion: CustomQuestion = {
+      id: editingQuestion,
+      text: newQuestion.text!,
+      options: newQuestion.options!,
+      correctAnswer: newQuestion.correctAnswer!,
+      timeLimit: newQuestion.timeLimit!
+    };
+    
+    setSettings(prev => ({
+      ...prev,
+      customQuestions: prev.customQuestions.map(q => 
+        q.id === editingQuestion ? updatedQuestion : q
+      )
+    }));
+    
+    setNewQuestion({
+      text: '',
+      options: ['', '', '', ''],
+      correctAnswer: 0,
+      timeLimit: 30
+    });
+    setIsAddingQuestion(false);
+    setEditingQuestion(null);
+  };
+
+  const handleDeleteQuestion = (questionId: string) => {
+    setSettings(prev => ({
+      ...prev,
+      customQuestions: prev.customQuestions.filter(q => q.id !== questionId)
+    }));
+  };
+
+  const cancelQuestionEdit = () => {
+    setNewQuestion({
+      text: '',
+      options: ['', '', '', ''],
+      correctAnswer: 0,
+      timeLimit: 30
+    });
+    setIsAddingQuestion(false);
+    setEditingQuestion(null);
   };
 
   const copyRoomCode = async () => {
@@ -240,6 +332,160 @@ export default function HostDashboard() {
               </div>
             </div>
 
+            {/* Custom Questions Panel */}
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-semibold text-gray-900">Custom Questions</h2>
+                <button
+                  onClick={() => setIsAddingQuestion(true)}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Question</span>
+                </button>
+              </div>
+
+              {/* Add/Edit Question Form */}
+              {isAddingQuestion && (
+                <div className="bg-gray-50 p-4 rounded-lg mb-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                    {editingQuestion ? 'Edit Question' : 'Add New Question'}
+                  </h3>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Question Text
+                      </label>
+                      <textarea
+                        value={newQuestion.text || ''}
+                        onChange={(e) => setNewQuestion({...newQuestion, text: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        rows={3}
+                        placeholder="Enter your question here..."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Answer Options
+                      </label>
+                      {newQuestion.options?.map((option, index) => (
+                        <div key={index} className="flex items-center space-x-2 mb-2">
+                          <input
+                            type="radio"
+                            name="correctAnswer"
+                            checked={newQuestion.correctAnswer === index}
+                            onChange={() => setNewQuestion({...newQuestion, correctAnswer: index})}
+                            className="w-4 h-4 text-blue-600"
+                          />
+                          <input
+                            type="text"
+                            value={option}
+                            onChange={(e) => {
+                              const newOptions = [...(newQuestion.options || [])];
+                              newOptions[index] = e.target.value;
+                              setNewQuestion({...newQuestion, options: newOptions});
+                            }}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            placeholder={`Option ${index + 1}`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Time Limit (seconds)
+                      </label>
+                      <input
+                        type="number"
+                        min="5"
+                        max="120"
+                        value={newQuestion.timeLimit || 30}
+                        onChange={(e) => setNewQuestion({...newQuestion, timeLimit: parseInt(e.target.value) || 30})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={editingQuestion ? handleUpdateQuestion : handleAddQuestion}
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>{editingQuestion ? 'Update' : 'Add'} Question</span>
+                      </button>
+                      <button
+                        onClick={cancelQuestionEdit}
+                        className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors flex items-center space-x-2"
+                      >
+                        <X className="w-4 h-4" />
+                        <span>Cancel</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Questions List */}
+              <div className="space-y-3">
+                {settings.customQuestions.length === 0 ? (
+                  <p className="text-gray-500 text-center py-8">
+                    No custom questions added yet. Click "Add Question" to get started.
+                  </p>
+                ) : (
+                  settings.customQuestions.map((question, index) => (
+                    <div key={question.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded">
+                              Q{index + 1}
+                            </span>
+                            <span className="text-sm text-gray-500">
+                              {question.timeLimit}s
+                            </span>
+                          </div>
+                          <p className="text-gray-900 font-medium mb-2">{question.text}</p>
+                          <div className="space-y-1">
+                            {question.options.map((option, optIndex) => (
+                              <div key={optIndex} className="flex items-center space-x-2">
+                                <span className={`w-2 h-2 rounded-full ${
+                                  optIndex === question.correctAnswer ? 'bg-green-500' : 'bg-gray-300'
+                                }`} />
+                                <span className={`text-sm ${
+                                  optIndex === question.correctAnswer ? 'text-green-700 font-medium' : 'text-gray-600'
+                                }`}>
+                                  {option}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex space-x-2 ml-4">
+                          <button
+                            onClick={() => handleEditQuestion(question.id)}
+                            className="text-blue-600 hover:text-blue-800 p-1"
+                            title="Edit question"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteQuestion(question.id)}
+                            className="text-red-600 hover:text-red-800 p-1"
+                            title="Delete question"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             {/* Create Game Panel */}
             <div className="bg-white rounded-xl shadow-lg p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-6">Create New Game</h2>
@@ -251,6 +497,7 @@ export default function HostDashboard() {
                     <li>• {settings.rounds || 1} rounds</li>
                     <li>• {settings.questionsPerRound || 5} questions per round</li>
                     <li>• {settings.timePerQuestion || 30} seconds per question</li>
+                    <li>• {settings.customQuestions.length} custom questions</li>
                     <li>• Total: {(settings.rounds || 1) * (settings.questionsPerRound || 5)} questions</li>
                   </ul>
                 </div>

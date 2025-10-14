@@ -35,6 +35,14 @@ export interface GameSession {
   createdAt: Date;
 }
 
+export interface CustomQuestion {
+  id: string;
+  text: string;
+  options: string[];
+  correctAnswer: number; // index of correct option
+  timeLimit: number;
+}
+
 export interface GameSettings {
   rounds: number;
   questionsPerRound: number;
@@ -42,6 +50,7 @@ export interface GameSettings {
   allowTeamVoting: boolean;
   enableSpeedBonus: boolean;
   enableStreakBonus: boolean;
+  customQuestions: CustomQuestion[];
 }
 
 export enum GameState {
@@ -78,6 +87,9 @@ export interface SocketEvents {
   'host:start-game': () => void;
   'host:next-question': () => void;
   'host:end-game': () => void;
+  'host:add-question': (question: CustomQuestion) => void;
+  'host:update-question': (question: CustomQuestion) => void;
+  'host:delete-question': (questionId: string) => void;
   
   // Player events
   'player:join-room': (data: { roomCode: string; playerName: string; teamId: string }) => void;
