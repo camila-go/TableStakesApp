@@ -37,6 +37,7 @@ export default function HostDashboard() {
   });
 
   useSocketEvent(socket, 'game:state-changed', (newState: GameState) => {
+    console.log('Host received state change:', newState);
     if (gameSession) {
       setGameSession({ ...gameSession, gameState: newState });
     }

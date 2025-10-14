@@ -27,14 +27,21 @@ export default function GamePage() {
       const data = JSON.parse(storedData);
       setPlayerData(data);
       
-      // Join the room
-      if (socket && isConnected) {
-        socket.emit('player:join-room', {
-          roomCode: data.roomCode,
-          playerName: data.playerName,
-          teamId: data.teamId
-        });
-      }
+      // Join the room with retry mechanism
+      const joinRoom = () => {
+        if (socket && isConnected) {
+          socket.emit('player:join-room', {
+            roomCode: data.roomCode,
+            playerName: data.playerName,
+            teamId: data.teamId
+          });
+        } else {
+          // Retry after a short delay if socket isn't ready
+          setTimeout(joinRoom, 100);
+        }
+      };
+      
+      joinRoom();
     } else {
       router.push('/');
     }
@@ -92,7 +99,13 @@ export default function GamePage() {
 
   useSocketEvent(socket, 'game:error', (error: string) => {
     console.error('Game error:', error);
-    alert(error);
+    // Only show alert for critical errors, not connection issues
+    if (error !== 'Room not found' || gameSession) {
+      alert(error);
+    } else {
+      // For room not found, redirect back to home
+      router.push('/');
+    }
   });
 
   // Timer countdown

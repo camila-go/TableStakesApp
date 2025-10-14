@@ -40,8 +40,11 @@ class GameManager {
 
       // Player joins a room
       socket.on('player:join-room', (data: { roomCode: string; playerName: string; teamId: string }) => {
+        console.log('Player attempting to join room:', data.roomCode);
+        console.log('Available rooms:', Array.from(this.games.keys()));
         const game = this.games.get(data.roomCode);
         if (!game) {
+          console.log('Room not found:', data.roomCode);
           socket.emit('game:error', 'Room not found');
           return;
         }
