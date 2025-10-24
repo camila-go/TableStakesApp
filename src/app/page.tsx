@@ -1,42 +1,135 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Trophy, Users, Zap } from 'lucide-react';
+import { Trophy, Zap, Smartphone, QrCode } from 'lucide-react';
+import { supabase, isSupabaseReady } from '@/lib/supabase';
 
 export default function Home() {
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
-  const [selectedTeam, setSelectedTeam] = useState('');
+  const [email, setEmail] = useState('');
   const [isJoining, setIsJoining] = useState(false);
+  const [showQRCode, setShowQRCode] = useState(false);
+  const [playerData, setPlayerData] = useState<any>(null);
   const router = useRouter();
 
-  const teams = [
-    { id: 'team-1', name: 'Table 1', color: '#FF6B6B' },
-    { id: 'team-2', name: 'Table 2', color: '#4ECDC4' },
-    { id: 'team-3', name: 'Table 3', color: '#45B7D1' },
-    { id: 'team-4', name: 'Table 4', color: '#96CEB4' },
-    { id: 'team-5', name: 'Table 5', color: '#FFEAA7' },
-    { id: 'team-6', name: 'Table 6', color: '#DDA0DD' },
-  ];
+  // Check for returning player
+  useEffect(() => {
+    const storedPlayer = localStorage.getItem('playerData');
+    if (storedPlayer) {
+      const data = JSON.parse(storedPlayer);
+      setPlayerData(data);
+      setPlayerName(data.name);
+      setEmail(data.email || '');
+    }
+  }, []);
 
   const handleJoinGame = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomCode || !playerName || !selectedTeam) return;
+    if (!roomCode || !playerName) return;
 
     setIsJoining(true);
     
-    // Store player data in session storage
-    sessionStorage.setItem('playerData', JSON.stringify({
-      roomCode,
-      playerName,
-      teamId: selectedTeam,
-      teamName: teams.find(t => t.id === selectedTeam)?.name
-    }));
+    try {
+      if (!isSupabaseReady) {
+        // Mock mode - create temporary player data
+        const mockPlayer = {
+          id: `mock-${Date.now()}`,
+          name: playerName,
+          email: email || null,
+          total_score: 0
+        };
 
-    // Navigate to game page
-    router.push(`/game/${roomCode}`);
+        const playerData = {
+          id: mockPlayer.id,
+          name: mockPlayer.name,
+          email: mockPlayer.email,
+          totalScore: mockPlayer.total_score,
+          roomCode
+        };
+        
+        localStorage.setItem('playerData', JSON.stringify(playerData));
+        sessionStorage.setItem('currentGame', JSON.stringify({ roomCode, playerId: mockPlayer.id }));
+
+        // Navigate to game page
+        router.push(`/game/${roomCode}`);
+        return;
+      }
+
+      // Test Supabase connection first
+      console.log('Testing Supabase connection...');
+      const { data: testData, error: testError } = await supabase
+        .from('players')
+        .select('count')
+        .limit(1);
+      
+      if (testError) {
+        console.error('Supabase connection test failed:', testError);
+        throw new Error(`Database connection failed: ${testError.message}`);
+      }
+      
+      console.log('Supabase connection test passed');
+
+      // Real Supabase mode
+      let player;
+      const { data: existingPlayer, error: selectError } = await supabase
+        .from('players')
+        .select('*')
+        .eq('name', playerName)
+        .single();
+
+      if (selectError && selectError.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is expected for new players
+        throw selectError;
+      }
+
+      if (existingPlayer) {
+        player = existingPlayer;
+        // Update last seen
+        const { error: updateError } = await supabase
+          .from('players')
+          .update({ last_seen: new Date().toISOString() })
+          .eq('id', player.id);
+        
+        if (updateError) throw updateError;
+      } else {
+        // Create new player
+        const { data: newPlayer, error: insertError } = await supabase
+          .from('players')
+          .insert({
+            name: playerName,
+            email: email || null
+          })
+          .select()
+          .single();
+
+        if (insertError) throw insertError;
+        player = newPlayer;
+      }
+
+      // Store player data
+      const playerData = {
+        id: player.id,
+        name: player.name,
+        email: player.email,
+        totalScore: player.total_score,
+        roomCode
+      };
+      
+      localStorage.setItem('playerData', JSON.stringify(playerData));
+      sessionStorage.setItem('currentGame', JSON.stringify({ roomCode, playerId: player.id }));
+
+      // Navigate to game page
+      router.push(`/game/${roomCode}`);
+    } catch (error) {
+      console.error('Error joining game:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
+      alert(`Failed to join game: ${error.message || 'Unknown error'}. Please check the console for details.`);
+    } finally {
+      setIsJoining(false);
+    }
   };
 
   return (
@@ -84,6 +177,42 @@ export default function Home() {
           </motion.p>
         </motion.header>
 
+        {/* Supabase Setup Notice */}
+        {!isSupabaseReady && (
+          <motion.div 
+            className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.8 }}
+          >
+            <div className="flex items-center">
+              <Zap className="w-6 h-6 text-yellow-600 mr-3" />
+              <div>
+                <p className="text-yellow-800 font-semibold">Demo Mode</p>
+                <p className="text-yellow-700 text-sm">Running in demo mode. Set up Supabase for full functionality.</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Welcome Back Message */}
+        {playerData && (
+          <motion.div 
+            className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.8 }}
+          >
+            <div className="flex items-center">
+              <Trophy className="w-6 h-6 text-green-600 mr-3" />
+              <div>
+                <p className="text-green-800 font-semibold">Welcome back, {playerData.name}! 👋</p>
+                <p className="text-green-700 text-sm">Your tournament score: {playerData.totalScore} points</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* Features */}
         <motion.section 
           className="grid grid-cols-3 gap-4 mb-8"
@@ -93,9 +222,9 @@ export default function Home() {
           aria-label="Game features"
         >
           {[
-            { icon: Users, text: 'Team Play', color: 'blue', description: 'Collaborate with your team' },
+            { icon: Smartphone, text: 'Mobile-First', color: 'blue', description: 'Optimized for phones' },
             { icon: Zap, text: 'Real-time', color: 'yellow', description: 'Live updates and scoring' },
-            { icon: Trophy, text: 'Competitive', color: 'green', description: 'Compete for the top spot' }
+            { icon: Trophy, text: 'Individual', color: 'green', description: 'Compete solo for glory' }
           ].map((feature, index) => (
             <motion.div 
               key={index}
@@ -136,28 +265,54 @@ export default function Home() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 1.4 }}
             >
-              <label htmlFor="roomCode" className="block text-base font-semibold text-gray-900 mb-2">
-                Room Code
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label htmlFor="roomCode" className="block text-base font-semibold text-gray-900">
+                  Room Code
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowQRCode(!showQRCode)}
+                  className="flex items-center text-blue-600 hover:text-blue-700 text-sm"
+                >
+                  <QrCode className="w-4 h-4 mr-1" />
+                  {showQRCode ? 'Hide QR' : 'Show QR'}
+                </button>
+              </div>
+              
+              {showQRCode && (
+                <motion.div 
+                  className="bg-white p-4 rounded-lg border-2 border-gray-200 mb-3 text-center"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                >
+                  <p className="text-sm text-gray-600 mb-2">Scan QR code to auto-fill room code:</p>
+                  <div className="bg-gray-100 p-4 rounded-lg">
+                    <p className="text-xs text-gray-500">QR Code Scanner Placeholder</p>
+                    <p className="text-xs text-gray-400 mt-1">(QR code generation coming soon)</p>
+                  </div>
+                </motion.div>
+              )}
+              
               <input
                 type="text"
                 id="roomCode"
                 name="roomCode"
                 value={roomCode}
                 onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                placeholder="Enter 6-digit code"
+                placeholder="Enter 4-6 digit code"
                 maxLength={6}
                 className="w-full px-4 py-4 border-2 border-gray-400 rounded-lg focus:ring-4 focus:ring-blue-500 focus:border-blue-500 text-center text-xl font-mono tracking-widest transition-all bg-white text-gray-900 placeholder-gray-600"
                 required
                 aria-describedby="roomCode-help"
-                aria-invalid={roomCode.length > 0 && roomCode.length !== 6 ? 'true' : 'false'}
+                aria-invalid={roomCode.length > 0 && roomCode.length < 4 ? 'true' : 'false'}
               />
               <div id="roomCode-help" className="sr-only">
-                Enter the 6-digit room code provided by your game host
+                Enter the room code provided by your game host
               </div>
-              {roomCode.length > 0 && roomCode.length !== 6 && (
+              {roomCode.length > 0 && roomCode.length < 4 && (
                 <p className="text-red-600 text-sm mt-1" role="alert">
-                  Room code must be exactly 6 digits
+                  Room code must be at least 4 digits
                 </p>
               )}
             </motion.div>
@@ -189,79 +344,65 @@ export default function Home() {
               </div>
             </motion.div>
 
-            {/* Team Selection */}
+            {/* Email (Optional) */}
             <motion.div
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 1.6 }}
             >
-              <fieldset>
-                <legend className="block text-base font-semibold text-gray-900 mb-3">
-                  Select Your Table
-                </legend>
-                <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-labelledby="team-selection">
-                  {teams.map((team, index) => (
-                    <motion.button
-                      key={team.id}
-                      type="button"
-                      onClick={() => setSelectedTeam(team.id)}
-                      className={`p-4 rounded-lg border-3 transition-all focus:ring-4 focus:ring-blue-500 focus:ring-offset-2 ${
-                        selectedTeam === team.id
-                          ? 'border-blue-600 bg-blue-100 shadow-lg'
-                          : 'border-gray-300 hover:border-gray-400 bg-white hover:bg-gray-50'
-                      }`}
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: 1.7 + index * 0.05 }}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      role="radio"
-                      aria-checked={selectedTeam === team.id}
-                      aria-describedby={`team-${team.id}-desc`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <div
-                          className="w-6 h-6 rounded-full border-2 border-white shadow-sm"
-                          style={{ backgroundColor: team.color }}
-                          aria-hidden="true"
-                        />
-                        <span className="text-base font-semibold text-gray-900">{team.name}</span>
-                        {selectedTeam === team.id && (
-                          <div className="ml-auto">
-                            <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center">
-                              <span className="text-white text-sm font-bold">✓</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <span id={`team-${team.id}-desc`} className="sr-only">
-                        Join {team.name} team
-                      </span>
-                    </motion.button>
-                  ))}
-                </div>
-              </fieldset>
+              <label htmlFor="email" className="block text-base font-semibold text-gray-900 mb-2">
+                Email <span className="text-gray-500 font-normal">(Optional)</span>
+              </label>
+              <input
+                type="email"
+                id="email"
+                name="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="your@email.com"
+                className="w-full px-4 py-4 border-2 border-gray-400 rounded-lg focus:ring-4 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white text-gray-900 placeholder-gray-600 text-lg"
+                aria-describedby="email-help"
+              />
+              <div id="email-help" className="sr-only">
+                Optional email for score tracking and notifications
+              </div>
             </motion.div>
 
             {/* Join Button */}
             <motion.button
               type="submit"
-              disabled={isJoining || !roomCode || !playerName || !selectedTeam || roomCode.length !== 6}
+              disabled={isJoining || !roomCode || !playerName || roomCode.length < 4}
               className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white py-4 px-6 rounded-lg font-bold text-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all focus:ring-4 focus:ring-blue-500 focus:ring-offset-2 shadow-lg"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 1.8 }}
+              transition={{ delay: 1.7 }}
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               aria-describedby="join-button-help"
             >
               {isJoining ? 'Joining...' : 'Join Game'}
               <span id="join-button-help" className="sr-only">
-                Submit the form to join the game with your selected team
+                Submit the form to join the game
               </span>
             </motion.button>
           </form>
         </motion.section>
+
+        {/* PWA Install Prompt */}
+        <motion.div 
+          className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 2.0 }}
+        >
+          <div className="flex items-center">
+            <Smartphone className="w-6 h-6 text-blue-600 mr-3" />
+            <div>
+              <p className="text-blue-800 font-semibold">Add to Home Screen</p>
+              <p className="text-blue-700 text-sm">For instant access, add this app to your phone's home screen</p>
+            </div>
+          </div>
+        </motion.div>
 
         {/* Host Link */}
         <motion.nav 
@@ -269,7 +410,7 @@ export default function Home() {
           className="text-center mt-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 2.0 }}
+          transition={{ delay: 2.2 }}
           aria-label="Host navigation"
         >
           <p className="text-sm text-gray-600">
