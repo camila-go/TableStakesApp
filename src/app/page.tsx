@@ -13,18 +13,64 @@ export default function Home() {
   const [isJoining, setIsJoining] = useState(false);
   const [showQRCode, setShowQRCode] = useState(false);
   const [playerData, setPlayerData] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<'join' | 'leaderboard'>('join');
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
   const router = useRouter();
 
-  // Check for returning player
+  // Fetch leaderboard
+  const fetchLeaderboard = async () => {
+    if (!isSupabaseReady) return;
+    
+    setIsLoadingLeaderboard(true);
+    try {
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .order('total_score', { ascending: false })
+        .limit(50);
+      
+      if (error) throw error;
+      setLeaderboard(data || []);
+    } catch (err) {
+      console.error('Error fetching leaderboard:', err);
+    } finally {
+      setIsLoadingLeaderboard(false);
+    }
+  };
+
+  // Check for returning player and URL parameters
   useEffect(() => {
+    // Check for returning player in localStorage
     const storedPlayer = localStorage.getItem('playerData');
     if (storedPlayer) {
-      const data = JSON.parse(storedPlayer);
-      setPlayerData(data);
-      setPlayerName(data.name);
-      setEmail(data.email || '');
+      try {
+        const data = JSON.parse(storedPlayer);
+        setPlayerData(data);
+        // Auto-fill name and email from stored data
+        if (data.name) setPlayerName(data.name);
+        if (data.email) setEmail(data.email);
+      } catch (e) {
+        console.error('Error parsing stored player data:', e);
+      }
+    }
+
+    // Check for room code in URL params (from QR code)
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const codeFromUrl = urlParams.get('code');
+      if (codeFromUrl) {
+        setRoomCode(codeFromUrl);
+      }
     }
   }, []);
+
+  // Fetch leaderboard when switching to leaderboard tab
+  useEffect(() => {
+    if (activeTab === 'leaderboard') {
+      fetchLeaderboard();
+    }
+  }, [activeTab]);
 
   const handleJoinGame = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,18 +120,25 @@ export default function Home() {
 
       // Real Supabase mode
       let player;
-      const { data: existingPlayer, error: selectError } = await supabase
+      
+      // Check if this exact name + email combination exists
+      let query = supabase
         .from('players')
         .select('*')
-        .eq('name', playerName)
-        .single();
+        .eq('name', playerName);
+      
+      if (email) {
+        query = query.eq('email', email);
+      }
+      
+      const { data: existingPlayer, error: selectError } = await query.maybeSingle();
 
-      if (selectError && selectError.code !== 'PGRST116') {
-        // PGRST116 is "not found" which is expected for new players
+      if (selectError) {
         throw selectError;
       }
 
       if (existingPlayer) {
+        // Found exact match (same name and email)
         player = existingPlayer;
         // Update last seen
         const { error: updateError } = await supabase
@@ -95,6 +148,18 @@ export default function Home() {
         
         if (updateError) throw updateError;
       } else {
+        // Check if name is already taken by someone else
+        const { data: nameCheck } = await supabase
+          .from('players')
+          .select('name')
+          .eq('name', playerName)
+          .limit(1);
+        
+        if (nameCheck && nameCheck.length > 0) {
+          // Name is taken
+          throw new Error(`The name "${playerName}" is already taken. Please add your last initial or choose a different name (e.g., "${playerName} G")`);
+        }
+        
         // Create new player
         const { data: newPlayer, error: insertError } = await supabase
           .from('players')
@@ -213,50 +278,60 @@ export default function Home() {
           </motion.div>
         )}
 
-        {/* Features */}
-        <motion.section 
-          className="grid grid-cols-3 gap-4 mb-8"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.8 }}
-          aria-label="Game features"
+        {/* Tab Navigation */}
+        <motion.div 
+          className="flex space-x-2 mb-6"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.0 }}
         >
-          {[
-            { icon: Smartphone, text: 'Mobile-First', color: 'blue', description: 'Optimized for phones' },
-            { icon: Zap, text: 'Real-time', color: 'yellow', description: 'Live updates and scoring' },
-            { icon: Trophy, text: 'Individual', color: 'green', description: 'Compete solo for glory' }
-          ].map((feature, index) => (
-            <motion.div 
-              key={index}
-              className="text-center"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8 + index * 0.1 }}
-              whileHover={{ scale: 1.05 }}
-            >
-              <div className={`bg-white p-3 rounded-lg shadow-sm mb-2`}>
-                <feature.icon 
-                  className={`w-6 h-6 text-${feature.color}-600 mx-auto`} 
-                  aria-hidden="true"
-                />
-              </div>
-              <p className="text-base text-gray-800 font-medium">{feature.text}</p>
-              <span className="sr-only">{feature.description}</span>
-            </motion.div>
-          ))}
-        </motion.section>
+          <button
+            onClick={() => setActiveTab('join')}
+            className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${
+              activeTab === 'join'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/70'
+            }`}
+          >
+            Join Game
+          </button>
+          <button
+            onClick={() => setActiveTab('leaderboard')}
+            className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all flex items-center justify-center space-x-2 ${
+              activeTab === 'leaderboard'
+                ? 'bg-white text-blue-600 shadow-lg'
+                : 'bg-white/50 text-gray-600 hover:bg-white/70'
+            }`}
+          >
+            <Trophy className="w-5 h-5" />
+            <span>Leaderboard</span>
+          </button>
+        </motion.div>
 
         {/* Join Form */}
-        <motion.section 
-          className="bg-white rounded-xl shadow-lg p-6"
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.2 }}
-          aria-labelledby="join-game-heading"
-        >
-          <h2 id="join-game-heading" className="text-xl font-semibold text-gray-900 mb-6 text-center">
-            Join Game
-          </h2>
+        {activeTab === 'join' && (
+          <motion.section 
+            className="bg-white rounded-xl shadow-lg p-6"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            aria-labelledby="join-game-heading"
+          >
+            <h2 id="join-game-heading" className="text-xl font-semibold text-gray-900 mb-4 text-center">
+              Join Game
+            </h2>
+
+            {/* Onboarding Help */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-blue-900 font-semibold mb-1">👋 How to Play:</p>
+              <ol className="text-xs text-blue-800 space-y-1 ml-4 list-decimal">
+                <li>Get the room code from your host</li>
+                <li>Enter your name (must be unique)</li>
+                <li>Answer trivia questions as fast as you can!</li>
+                <li>Earn points for correct answers</li>
+                <li>Check the leaderboard to see your rank</li>
+              </ol>
+            </div>
           
           <form onSubmit={handleJoinGame} className="space-y-4" role="form" aria-label="Join game form">
             {/* Room Code */}
@@ -387,6 +462,93 @@ export default function Home() {
             </motion.button>
           </form>
         </motion.section>
+        )}
+
+        {/* Leaderboard View */}
+        {activeTab === 'leaderboard' && (
+          <motion.section 
+            className="bg-white rounded-xl shadow-lg p-6"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+          >
+            <h2 className="text-xl font-semibold text-gray-900 mb-6 text-center flex items-center justify-center">
+              <Trophy className="w-6 h-6 mr-2 text-yellow-500" />
+              Tournament Leaderboard
+            </h2>
+
+            {!isSupabaseReady && (
+              <div className="text-center py-8">
+                <p className="text-gray-600">Leaderboard requires Supabase setup</p>
+              </div>
+            )}
+
+            {isSupabaseReady && isLoadingLeaderboard && (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                <p className="text-gray-600 mt-2">Loading leaderboard...</p>
+              </div>
+            )}
+
+            {isSupabaseReady && !isLoadingLeaderboard && leaderboard.length === 0 && (
+              <div className="text-center py-8">
+                <Trophy className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                <p className="text-gray-600">No players yet. Be the first!</p>
+              </div>
+            )}
+
+            {isSupabaseReady && !isLoadingLeaderboard && leaderboard.length > 0 && (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {leaderboard.map((player, index) => (
+                  <motion.div
+                    key={player.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    className={`flex items-center justify-between p-3 rounded-lg ${
+                      player.id === playerData?.id
+                        ? 'bg-blue-50 border-2 border-blue-500'
+                        : index === 0
+                        ? 'bg-yellow-50 border border-yellow-200'
+                        : index === 1
+                        ? 'bg-gray-50 border border-gray-200'
+                        : index === 2
+                        ? 'bg-orange-50 border border-orange-200'
+                        : 'bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                          index === 0
+                            ? 'bg-yellow-400 text-yellow-900'
+                            : index === 1
+                            ? 'bg-gray-300 text-gray-900'
+                            : index === 2
+                            ? 'bg-orange-400 text-orange-900'
+                            : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {index + 1}
+                      </div>
+                      <div>
+                        <p className={`font-semibold ${player.id === playerData?.id ? 'text-blue-900' : 'text-gray-900'}`}>
+                          {player.name} {player.id === playerData?.id && '(You)'}
+                        </p>
+                        {player.email && (
+                          <p className="text-xs text-gray-500">{player.email}</p>
+                        )}
+                      </div>
+                    </div>
+                    <span className="font-bold text-purple-600 text-lg">
+                      {player.total_score} pts
+                    </span>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </motion.section>
+        )}
 
         {/* PWA Install Prompt */}
         <motion.div 
