@@ -368,36 +368,75 @@ export default function GamePage() {
         });
       
       // Update daily score with tiebreaker data (whether correct or not)
-      const { data: dailyScore } = await supabase
+      const { data: dailyScore, error: fetchDailyError } = await supabase
         .from('daily_scores')
         .select('*')
         .eq('player_id', player.id)
         .eq('day', currentQuestion.day)
         .single();
       
+      if (fetchDailyError && fetchDailyError.code !== 'PGRST116') {
+        console.error('Error fetching daily score:', fetchDailyError);
+      }
+      
       if (dailyScore) {
-        // Update existing daily score
-        await supabase
+        // Update existing daily score - try with tiebreaker fields first
+        let updateData: any = { 
+          score: dailyScore.score + pointsEarned,
+          questions_answered: dailyScore.questions_answered + 1
+        };
+        
+        // Only include tiebreaker fields if they exist in the current record
+        if ('correct_answers' in dailyScore) {
+          updateData.correct_answers = (dailyScore.correct_answers || 0) + (isCorrect ? 1 : 0);
+        }
+        if ('total_time_taken' in dailyScore) {
+          updateData.total_time_taken = (dailyScore.total_time_taken || 0) + timeTaken;
+        }
+        
+        const { error: updateError } = await supabase
           .from('daily_scores')
-          .update({ 
-            score: dailyScore.score + pointsEarned,
-            questions_answered: dailyScore.questions_answered + 1,
-            correct_answers: dailyScore.correct_answers + (isCorrect ? 1 : 0),
-            total_time_taken: dailyScore.total_time_taken + timeTaken
-          })
+          .update(updateData)
           .eq('id', dailyScore.id);
+          
+        if (updateError) {
+          console.error('Error updating daily score:', updateError);
+        } else {
+          console.log('Daily score updated successfully:', updateData);
+        }
       } else {
-        // Insert new daily score
-        await supabase
+        // Insert new daily score - try with tiebreaker fields, fallback to basic
+        let insertData: any = {
+          player_id: player.id,
+          day: currentQuestion.day,
+          score: pointsEarned,
+          questions_answered: 1
+        };
+        
+        // Try including tiebreaker fields
+        const { error: insertError } = await supabase
           .from('daily_scores')
           .insert({
-            player_id: player.id,
-            day: currentQuestion.day,
-            score: pointsEarned,
-            questions_answered: 1,
+            ...insertData,
             correct_answers: isCorrect ? 1 : 0,
             total_time_taken: timeTaken
           });
+          
+        if (insertError) {
+          console.log('Insert with tiebreaker failed, trying without:', insertError);
+          // Fallback: insert without tiebreaker fields
+          const { error: fallbackError } = await supabase
+            .from('daily_scores')
+            .insert(insertData);
+            
+          if (fallbackError) {
+            console.error('Error inserting daily score (fallback):', fallbackError);
+          } else {
+            console.log('Daily score inserted successfully (without tiebreaker)');
+          }
+        } else {
+          console.log('Daily score inserted successfully (with tiebreaker)');
+        }
       }
       
       // Update player total score only if correct
