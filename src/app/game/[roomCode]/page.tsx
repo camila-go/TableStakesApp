@@ -87,16 +87,19 @@ export default function GamePage() {
     }, 250);
   }, []);
 
-  // Fetch leaderboard - show all players who have played today
+  // Fetch leaderboard - show all players who have played today with tiebreaker logic
   const fetchLeaderboard = useCallback(async () => {
     if (!player || !game) return;
     
-    // Get all players who have scores for this game's day
+    // Get all players who have scores for this game's day with tiebreaker fields
     const { data: dailyScoresData } = await supabase
       .from('daily_scores')
-      .select('player_id, score')
+      .select('player_id, score, total_time_taken, correct_answers, created_at')
       .eq('day', game.day)
-      .order('score', { ascending: false });
+      .order('score', { ascending: false })
+      .order('total_time_taken', { ascending: true })
+      .order('correct_answers', { ascending: false })
+      .order('created_at', { ascending: true });
     
     if (!dailyScoresData) return;
     
@@ -110,14 +113,29 @@ export default function GamePage() {
       .in('id', playerIds);
     
     if (playersData) {
-      // Merge daily scores with player data
+      // Merge daily scores with player data and sort with tiebreaker logic
       const leaderboardData = playersData.map(p => {
         const dailyScore = dailyScoresData.find(ds => ds.player_id === p.id);
         return {
           ...p,
-          daily_score: dailyScore?.score || 0
+          daily_score: dailyScore?.score || 0,
+          total_time_taken: dailyScore?.total_time_taken || 0,
+          correct_answers: dailyScore?.correct_answers || 0,
+          score_timestamp: dailyScore?.created_at
         };
-      }).sort((a, b) => b.daily_score - a.daily_score).slice(0, 50);
+      }).sort((a, b) => {
+        // Primary: Score (higher is better)
+        if (b.daily_score !== a.daily_score) return b.daily_score - a.daily_score;
+        
+        // Tiebreaker 1: Total time taken (lower is better)
+        if (a.total_time_taken !== b.total_time_taken) return a.total_time_taken - b.total_time_taken;
+        
+        // Tiebreaker 2: Correct answers (higher is better)
+        if (b.correct_answers !== a.correct_answers) return b.correct_answers - a.correct_answers;
+        
+        // Tiebreaker 3: Who started first (earlier timestamp wins)
+        return new Date(a.score_timestamp).getTime() - new Date(b.score_timestamp).getTime();
+      }).slice(0, 50);
       
       setLeaderboard(leaderboardData);
       const rank = leaderboardData.findIndex(p => p.id === player.id);
@@ -307,6 +325,7 @@ export default function GamePage() {
       }
       
       // Record the answer
+      const timeTaken = 30 - timeRemaining;
       await supabase
         .from('answers')
         .insert({
@@ -315,11 +334,44 @@ export default function GamePage() {
           day: currentQuestion.day,
           answer: answer,
           is_correct: isCorrect,
-          time_taken: 30 - timeRemaining,
+          time_taken: timeTaken,
           points_earned: pointsEarned
         });
       
-      // Update player score
+      // Update daily score with tiebreaker data (whether correct or not)
+      const { data: dailyScore } = await supabase
+        .from('daily_scores')
+        .select('*')
+        .eq('player_id', player.id)
+        .eq('day', currentQuestion.day)
+        .single();
+      
+      if (dailyScore) {
+        // Update existing daily score
+        await supabase
+          .from('daily_scores')
+          .update({ 
+            score: dailyScore.score + pointsEarned,
+            questions_answered: dailyScore.questions_answered + 1,
+            correct_answers: dailyScore.correct_answers + (isCorrect ? 1 : 0),
+            total_time_taken: dailyScore.total_time_taken + timeTaken
+          })
+          .eq('id', dailyScore.id);
+      } else {
+        // Insert new daily score
+        await supabase
+          .from('daily_scores')
+          .insert({
+            player_id: player.id,
+            day: currentQuestion.day,
+            score: pointsEarned,
+            questions_answered: 1,
+            correct_answers: isCorrect ? 1 : 0,
+            total_time_taken: timeTaken
+          });
+      }
+      
+      // Update player total score only if correct
       if (isCorrect) {
         // Fetch current score from database to ensure accuracy
         const { data: currentPlayer } = await supabase
@@ -337,33 +389,6 @@ export default function GamePage() {
           .from('players')
           .update({ total_score: newScore })
           .eq('id', player.id);
-        
-        // Update daily score
-        const { data: dailyScore } = await supabase
-          .from('daily_scores')
-          .select('*')
-          .eq('player_id', player.id)
-          .eq('day', currentQuestion.day)
-          .single();
-          
-        if (dailyScore) {
-          await supabase
-            .from('daily_scores')
-            .update({ 
-              score: dailyScore.score + pointsEarned,
-              questions_answered: dailyScore.questions_answered + 1
-            })
-            .eq('id', dailyScore.id);
-        } else {
-          await supabase
-            .from('daily_scores')
-            .insert({
-              player_id: player.id,
-              day: currentQuestion.day,
-              score: pointsEarned,
-              questions_answered: 1
-            });
-        }
       }
       
       // Wait 3 seconds then move to next question

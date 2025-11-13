@@ -18,20 +18,60 @@ export default function Home() {
   const [isLoadingLeaderboard, setIsLoadingLeaderboard] = useState(false);
   const router = useRouter();
 
-  // Fetch leaderboard
+  // Fetch leaderboard with tiebreaker logic
   const fetchLeaderboard = async () => {
     if (!isSupabaseReady) return;
     
     setIsLoadingLeaderboard(true);
     try {
-      const { data, error } = await supabase
+      // Get all players with their total scores
+      const { data: players, error } = await supabase
         .from('players')
         .select('*')
         .order('total_score', { ascending: false })
+        .order('created_at', { ascending: true })
         .limit(50);
       
       if (error) throw error;
-      setLeaderboard(data || []);
+      
+      // Get aggregated daily stats for tiebreaker
+      const { data: dailyStats } = await supabase
+        .from('daily_scores')
+        .select('player_id, total_time_taken, correct_answers');
+      
+      if (players && dailyStats) {
+        // Calculate aggregate stats per player
+        const playerStats = new Map();
+        dailyStats.forEach(ds => {
+          const existing = playerStats.get(ds.player_id) || { totalTime: 0, totalCorrect: 0 };
+          playerStats.set(ds.player_id, {
+            totalTime: existing.totalTime + (ds.total_time_taken || 0),
+            totalCorrect: existing.totalCorrect + (ds.correct_answers || 0)
+          });
+        });
+        
+        // Merge stats and sort with tiebreaker
+        const enhancedPlayers = players.map(p => {
+          const stats = playerStats.get(p.id) || { totalTime: 0, totalCorrect: 0 };
+          return { ...p, ...stats };
+        }).sort((a, b) => {
+          // Primary: Total score (higher is better)
+          if (b.total_score !== a.total_score) return b.total_score - a.total_score;
+          
+          // Tiebreaker 1: Total time (lower is better)
+          if (a.totalTime !== b.totalTime) return a.totalTime - b.totalTime;
+          
+          // Tiebreaker 2: Total correct answers (higher is better)
+          if (b.totalCorrect !== a.totalCorrect) return b.totalCorrect - a.totalCorrect;
+          
+          // Tiebreaker 3: Created earlier (timestamp)
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        });
+        
+        setLeaderboard(enhancedPlayers);
+      } else {
+        setLeaderboard(players || []);
+      }
     } catch (err) {
       console.error('Error fetching leaderboard:', err);
     } finally {

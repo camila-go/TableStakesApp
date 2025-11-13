@@ -26,12 +26,14 @@ CREATE TABLE daily_scores (
   score INTEGER DEFAULT 0,
   questions_answered INTEGER DEFAULT 0,
   accuracy_percentage DECIMAL(5,2) DEFAULT 0,
+  total_time_taken INTEGER DEFAULT 0, -- Total time taken in seconds (tiebreaker)
+  correct_answers INTEGER DEFAULT 0, -- Number of correct answers (tiebreaker)
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(player_id, day)
 );
 
--- Index for fast leaderboard queries
-CREATE INDEX idx_daily_scores_day_score ON daily_scores(day, score DESC);
+-- Index for fast leaderboard queries with tiebreaker
+CREATE INDEX idx_daily_scores_day_score_tiebreaker ON daily_scores(day, score DESC, total_time_taken ASC, correct_answers DESC, created_at ASC);
 CREATE INDEX idx_daily_scores_player ON daily_scores(player_id);
 
 -- Answers Table (for detailed tracking)
