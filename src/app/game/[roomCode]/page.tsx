@@ -89,28 +89,56 @@ export default function GamePage() {
 
   // Fetch leaderboard - show all players who have played today with tiebreaker logic
   const fetchLeaderboard = useCallback(async () => {
-    if (!player || !game) return;
+    if (!player || !game) {
+      console.log('fetchLeaderboard: Missing player or game', { player: !!player, game: !!game });
+      return;
+    }
+    
+    console.log('Fetching leaderboard for day:', game.day);
     
     // Get all players who have scores for this game's day with tiebreaker fields
-    const { data: dailyScoresData } = await supabase
-      .from('daily_scores')
-      .select('player_id, score, total_time_taken, correct_answers, created_at')
-      .eq('day', game.day)
-      .order('score', { ascending: false })
-      .order('total_time_taken', { ascending: true })
-      .order('correct_answers', { ascending: false })
-      .order('created_at', { ascending: true });
+    // Try with tiebreaker fields first, fall back to basic query if columns don't exist
+    let dailyScoresData, scoresError;
+    try {
+      const result = await supabase
+        .from('daily_scores')
+        .select('player_id, score, total_time_taken, correct_answers, created_at')
+        .eq('day', game.day)
+        .order('score', { ascending: false })
+        .order('created_at', { ascending: true });
+      dailyScoresData = result.data;
+      scoresError = result.error;
+    } catch (err) {
+      // Fallback if tiebreaker columns don't exist yet
+      console.log('Falling back to basic query (tiebreaker columns may not exist)');
+      const result = await supabase
+        .from('daily_scores')
+        .select('player_id, score, created_at')
+        .eq('day', game.day)
+        .order('score', { ascending: false })
+        .order('created_at', { ascending: true });
+      dailyScoresData = result.data;
+      scoresError = result.error;
+    }
     
-    if (!dailyScoresData) return;
+    console.log('Daily scores data:', dailyScoresData, 'Error:', scoresError);
+    
+    if (!dailyScoresData || dailyScoresData.length === 0) {
+      console.log('No daily scores found for day', game.day);
+      setLeaderboard([]);
+      return;
+    }
     
     // Get player details for those with daily scores
     const playerIds = dailyScoresData.map(ds => ds.player_id);
-    if (playerIds.length === 0) return;
+    console.log('Player IDs:', playerIds);
     
-    const { data: playersData } = await supabase
+    const { data: playersData, error: playersError } = await supabase
       .from('players')
       .select('*')
       .in('id', playerIds);
+    
+    console.log('Players data:', playersData, 'Error:', playersError);
     
     if (playersData) {
       // Merge daily scores with player data and sort with tiebreaker logic
@@ -137,6 +165,7 @@ export default function GamePage() {
         return new Date(a.score_timestamp).getTime() - new Date(b.score_timestamp).getTime();
       }).slice(0, 50);
       
+      console.log('Final leaderboard data:', leaderboardData);
       setLeaderboard(leaderboardData);
       const rank = leaderboardData.findIndex(p => p.id === player.id);
       setPlayerRank(rank >= 0 ? rank + 1 : null);
@@ -783,46 +812,54 @@ export default function GamePage() {
                 <Trophy className="w-8 h-8 mr-3 text-yellow-500" />
                 Final Leaderboard
               </h2>
-              <div className="space-y-2">
-                {leaderboard.map((p, index) => (
-                  <div
-                    key={p.id}
-                    className={`flex items-center justify-between p-4 rounded-lg ${
-                      p.id === player?.id
-                        ? 'bg-blue-50 border-2 border-blue-500'
-                        : index === 0
-                        ? 'bg-yellow-50 border-2 border-yellow-200'
-                        : index === 1
-                        ? 'bg-gray-50 border-2 border-gray-200'
-                        : index === 2
-                        ? 'bg-orange-50 border-2 border-orange-200'
-                        : 'bg-gray-50'
-                    }`}
-                >
-                  <div className="flex items-center space-x-4">
-                      <div
-                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
-                          index === 0
-                            ? 'bg-yellow-400 text-yellow-900'
-                            : index === 1
-                            ? 'bg-gray-300 text-gray-900'
-                            : index === 2
-                            ? 'bg-orange-400 text-orange-900'
-                            : 'bg-gray-200 text-gray-700'
-                        }`}
-                      >
-                        {index + 1}
+              
+              {leaderboard.length === 0 ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Loading leaderboard...</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {leaderboard.map((p, index) => (
+                    <div
+                      key={p.id}
+                      className={`flex items-center justify-between p-4 rounded-lg ${
+                        p.id === player?.id
+                          ? 'bg-blue-50 border-2 border-blue-500'
+                          : index === 0
+                          ? 'bg-yellow-50 border-2 border-yellow-200'
+                          : index === 1
+                          ? 'bg-gray-50 border-2 border-gray-200'
+                          : index === 2
+                          ? 'bg-orange-50 border-2 border-orange-200'
+                          : 'bg-gray-50'
+                      }`}
+                    >
+                    <div className="flex items-center space-x-4">
+                        <div
+                          className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${
+                            index === 0
+                              ? 'bg-yellow-400 text-yellow-900'
+                              : index === 1
+                              ? 'bg-gray-300 text-gray-900'
+                              : index === 2
+                              ? 'bg-orange-400 text-orange-900'
+                              : 'bg-gray-200 text-gray-700'
+                          }`}
+                        >
+                          {index + 1}
+                        </div>
+                        <span className={`font-semibold ${p.id === player?.id ? 'text-blue-900' : 'text-gray-900'}`}>
+                          {p.name} {p.id === player?.id && '(You)'}
+                        </span>
                       </div>
-                      <span className={`font-semibold ${p.id === player?.id ? 'text-blue-900' : 'text-gray-900'}`}>
-                        {p.name} {p.id === player?.id && '(You)'}
+                      <span className="text-lg font-bold text-purple-600">
+                        {p.daily_score || p.total_score} pts
                       </span>
                     </div>
-                    <span className="text-lg font-bold text-purple-600">
-                      {p.daily_score || p.total_score} pts
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           </motion.div>
         )}
